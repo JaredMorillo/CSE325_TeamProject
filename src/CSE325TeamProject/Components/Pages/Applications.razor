@@ -1,0 +1,218 @@
+@page "/applications"
+@using System.Security.Claims
+@using CSE325TeamProject.Models
+@using CSE325TeamProject.Services
+@using Microsoft.AspNetCore.Components.Authorization
+@using CSE325TeamProject.Data
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject JobApplicationService JobApplications
+
+<PageTitle>My applications | CareerLaunch</PageTitle>
+
+<header class="section-heading">
+    <div>
+        <p class="eyebrow">YOUR SEARCH, ORGANIZED</p>
+        <h1>Job applications</h1>
+        <p class="text-secondary">Keep every opportunity and next step in one place.</p>
+    </div>
+</header>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger" role="alert">@errorMessage</div>
+}
+
+<section class="application-panel">
+    <h2>@(editingId is null ? "Add an application" : "Edit application")</h2>
+    <EditForm Model="draft" OnValidSubmit="SaveApplication">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger" />
+        <div class="application-form-grid">
+            <div>
+                <label for="company" class="form-label">Company</label>
+                <InputText id="company" class="form-control" @bind-Value="draft.Company" />
+                <ValidationMessage For="() => draft.Company" />
+            </div>
+            <div>
+                <label for="job-title" class="form-label">Job title</label>
+                <InputText id="job-title" class="form-control" @bind-Value="draft.JobTitle" />
+                <ValidationMessage For="() => draft.JobTitle" />
+            </div>
+            <div>
+                <label for="status" class="form-label">Status</label>
+                <InputSelect id="status" class="form-select" @bind-Value="draft.Status">
+                    <option>Applied</option>
+                    <option>Interviewing</option>
+                    <option>Offer</option>
+                    <option>Rejected</option>
+                    <option>Withdrawn</option>
+                </InputSelect>
+                <ValidationMessage For="() => draft.Status" />
+            </div>
+            <div>
+                <label for="applied-on" class="form-label">Applied on</label>
+                <InputDate id="applied-on" class="form-control" @bind-Value="draft.AppliedOn" />
+                <ValidationMessage For="() => draft.AppliedOn" />
+            </div>
+            <div class="application-form-notes">
+                <label for="notes" class="form-label">Notes</label>
+                <InputTextArea id="notes" class="form-control" @bind-Value="draft.Notes" />
+                <ValidationMessage For="() => draft.Notes" />
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">@(editingId is null ? "Add application" : "Save changes")</button>
+            @if (editingId is not null)
+            {
+                <button type="button" class="btn btn-outline-secondary" @onclick="CancelEdit">Cancel</button>
+            }
+        </div>
+    </EditForm>
+</section>
+
+<section class="applications-list">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">OPPORTUNITIES</p>
+            <h2>Your applications <span class="count-pill">@applications.Count</span></h2>
+        </div>
+    </div>
+
+    @if (applications.Count == 0)
+    {
+        <div class="empty-state">
+            <h3>No applications yet</h3>
+            <p>Add your first application above to start tracking your search.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Role</th>
+                        <th>Applied</th>
+                        <th>Status</th>
+                        <th>Notes</th>
+                        <th><span class="visually-hidden">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var application in applications)
+                    {
+                        <tr @key="application.Id">
+                            <td>
+                                <strong>@application.JobTitle</strong>
+                                <span class="d-block text-secondary">@application.Company</span>
+                            </td>
+                            <td>@application.AppliedOn.ToString("MMM d, yyyy")</td>
+                            <td><span class="status-pill">@application.Status</span></td>
+                            <td class="notes-cell">@application.Notes</td>
+                            <td class="application-actions">
+                                <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => EditApplication(application.Id)">Edit</button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteApplication(application.Id)">Delete</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    private List<JobApplication> applications = [];
+    private JobApplicationInput draft = new();
+    private string currentUserId = "";
+    private string? errorMessage;
+    private int? editingId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authenticationState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authenticationState.User;
+        if (user.Identity?.IsAuthenticated != true)
+        {
+            throw new InvalidOperationException("The applications page requires an authenticated user.");
+        }
+
+        var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new InvalidOperationException("The authenticated user has no identity identifier.");
+        }
+
+        currentUserId = userId;
+        await LoadApplications();
+    }
+
+    private async Task LoadApplications()
+    {
+        applications = await JobApplications.GetForUserAsync(currentUserId);
+    }
+
+    private async Task SaveApplication()
+    {
+        errorMessage = null;
+        if (editingId is int applicationId)
+        {
+            if (!await JobApplications.UpdateAsync(currentUserId, applicationId, draft))
+            {
+                errorMessage = "That application could not be found.";
+                return;
+            }
+        }
+        else
+        {
+            await JobApplications.CreateAsync(currentUserId, draft);
+        }
+
+        CancelEdit();
+        await LoadApplications();
+    }
+
+    private async Task EditApplication(int applicationId)
+    {
+        errorMessage = null;
+        var application = await JobApplications.FindForUserAsync(currentUserId, applicationId);
+        if (application is null)
+        {
+            errorMessage = "That application could not be found.";
+            return;
+        }
+
+        editingId = application.Id;
+        draft = new JobApplicationInput
+        {
+            Company = application.Company,
+            JobTitle = application.JobTitle,
+            Status = application.Status,
+            AppliedOn = application.AppliedOn,
+            Notes = application.Notes
+        };
+    }
+
+    private async Task DeleteApplication(int applicationId)
+    {
+        errorMessage = null;
+        if (!await JobApplications.DeleteAsync(currentUserId, applicationId))
+        {
+            errorMessage = "That application could not be found.";
+            return;
+        }
+
+        if (editingId == applicationId)
+        {
+            CancelEdit();
+        }
+
+        await LoadApplications();
+    }
+
+    private void CancelEdit()
+    {
+        editingId = null;
+        draft = new JobApplicationInput();
+    }
+}
